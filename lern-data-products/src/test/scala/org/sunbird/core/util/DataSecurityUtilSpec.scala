@@ -19,8 +19,8 @@ class DataSecurityUtilSpec extends FlatSpec with Matchers {
   }*/
 
   "downloadFile" should "download file with lower case name" in {
-    val fileUrl = "https://sunbirddevbbpublic.blob.core.windows.net/sunbird-content-dev/organisation/0137774123743232000/public.pem"
-    val orgId = "0130301382853263361394"
+    val fileUrl = "https://sunbirddev.blob.core.windows.net/sunbird-content-dev/organisation/01269878797503692810/public_key.pem"
+    val orgId = "01269878797503692810"
     val httpUtil = new HttpUtil
     val downloadPath = Constants.TEMP_DIR + orgId
     val downloadedFile = httpUtil.downloadFile(fileUrl, downloadPath)

@@ -61,10 +61,6 @@ postgres_address_space: 0.0.0.0/0 # Postgres trust address space
 lp_composite_search: "http://{{ groups['composite-search-cluster'][0] }}:9200" # Composite Cluster ip of LP
 lp_composite_search_host: "{{ groups['composite-search-cluster'][0] }}"
 lp_search: "http://{{private_ingressgateway_ip}}/search"
-service:
-  search:
-    url: http://{{private_ingressgateway_ip}}/search
-    path: /v3/search
 
 default_channel: "{{default_org_hash_id}}"
 
