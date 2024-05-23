@@ -236,3 +236,7 @@ assessment_metric_primary_category: "{{ exhaust_job_assessment_primary_category 
 # Default s3 variables
 sunbird_private_s3_storage_key: ""
 sunbird_private_s3_storage_secret: ""
+
+# Mongo DB connection vars
+mongo_connection_ip: "{{ml_mongodb_host | default(groups['mongo_master'][0])}}"
+ml_database: "{{ ml_mongodb | default('ml-survey') }}"

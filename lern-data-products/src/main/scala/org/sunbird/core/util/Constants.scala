@@ -31,4 +31,9 @@ object Constants {
     val ORG_PRIVATE_SEARCH_URL: String = AppConf.getConfig("org.search.private.api.url")
     val TEMP_DIR = AppConf.getConfig("spark_output_temp_dir")
     val SUNBIRD_COURSES_KEY_SPACE = AppConf.getConfig("course.metrics.cassandra.sunbirdCoursesKeyspace")
+    val ML_SERVICE_URL: String = AppConf.getConfig("ml.service.url")
+    val ML_ASSET_SEARCH_URL = s"$ML_SERVICE_URL" + AppConf.getConfig("ml.asset.search.path")
+    val ML_MONGO_HOST: String = AppConf.getConfig("ml.mongo.host")
+    val ML_MONGO_PORT: Int = AppConf.getConfig("ml.mongo.port").toInt
+    val ML_MONGO_DATABASE: String = AppConf.getConfig("ml.mongo.database")
 }
