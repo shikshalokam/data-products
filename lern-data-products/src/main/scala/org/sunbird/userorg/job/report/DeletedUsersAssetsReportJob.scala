@@ -1,21 +1,31 @@
 package org.sunbird.userorg.job.report
 
 import org.apache.spark.SparkContext
+import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.functions.{col, lit, udf, when}
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
-import org.apache.spark.sql._
+import org.bson.BsonObjectId
+import org.bson.types.ObjectId
 import org.ekstep.analytics.framework.JobDriver.className
 import org.ekstep.analytics.framework.conf.AppConf
 import org.ekstep.analytics.framework.util.DatasetUtil.extensions
 import org.ekstep.analytics.framework.util.{JSONUtils, JobLogger, RestUtil}
 import org.ekstep.analytics.framework.{FrameworkContext, IJob, JobConfig}
-import org.sunbird.core.util.{Constants, DecryptUtil}
+import org.mongodb.scala.Document
+import org.mongodb.scala.bson.BsonString
+import org.mongodb.scala.bson.conversions.Bson
+import org.mongodb.scala.model.Aggregates.{filter, project, sort}
+import org.mongodb.scala.model.Filters.{equal, in}
+import org.mongodb.scala.model.{Filters, Sorts}
+import org.sunbird.core.util.{Constants, DecryptUtil, MongoUtil}
 import org.sunbird.lms.exhaust.collection.{CollectionDetails, CourseBatch, DeleteCollectionInfo}
 import org.sunbird.lms.job.report.BaseReportsJob
 
 import java.text.SimpleDateFormat
+import java.util
 import java.util.Date
+import scala.collection.JavaConverters._
 
 object DeletedUsersAssetsReportJob extends IJob with BaseReportsJob with Serializable {
 
@@ -34,6 +44,7 @@ object DeletedUsersAssetsReportJob extends IJob with BaseReportsJob with Seriali
     deletedUsersDF.show()
     val contentAssetsDF = fetchContentAssets(userIds, channels)(spark)
     val courseAssetsDF = fetchCourseAssets(userIds, channels)(spark)
+    val mlAssetDf = processMlData()(fetchMlData(userIds), spark)
     val renamedDeletedUsersDF = deletedUsersDF
       .withColumnRenamed("id", "userIdAlias")
       .withColumnRenamed("username", "usernameAlias")
@@ -42,6 +53,8 @@ object DeletedUsersAssetsReportJob extends IJob with BaseReportsJob with Seriali
     val joinedContentDF = renamedDeletedUsersDF.join(contentAssetsDF, renamedDeletedUsersDF("userIdAlias") === contentAssetsDF("userId"), "inner")
     // Join deleted users with course batch assets
     val joinedCourseDF = renamedDeletedUsersDF.join(courseAssetsDF, renamedDeletedUsersDF("userIdAlias") === courseAssetsDF("userId"), "inner")
+    // Join deleted users with manage-learn assets
+    val joinedMlAssetDf = renamedDeletedUsersDF.join(mlAssetDf, renamedDeletedUsersDF("userIdAlias") === mlAssetDf("userId"), "inner")
     // Modify the concatRoles UDF to handle arrays
     val concatRoles = udf((roles: Any) => {
       roles match {
@@ -72,12 +85,24 @@ object DeletedUsersAssetsReportJob extends IJob with BaseReportsJob with Seriali
         .when(courseAssetsDF("status") === "2", "Batch ended").alias("assetStatus"),
       courseAssetsDF("objectType")
     )
+    // Select columns for manage-learn assets
+    val mlAssetCols = Seq(
+      joinedMlAssetDf("assetIdentifier"),
+      joinedMlAssetDf("assetName"),
+      joinedMlAssetDf("assetStatus"),
+      joinedMlAssetDf("objectType")
+    )
     // Combine DataFrames for content and course batch using unionAll
     val combinedDF = joinedContentDF.select(userCols ++ contentCols: _*).unionAll(
       joinedCourseDF.select(userCols ++ courseCols: _*)
     )
+    // Combining manage-learn assets DataFrame with content and course batch DF
+    val combinedDFWithMlAssets = combinedDF.unionAll(
+      joinedMlAssetDf.select(userCols ++ mlAssetCols: _*)
+    )
     // Deduplicate the combined DataFrame based on user ID
-    val finalDF = combinedDF.distinct()
+    val finalDF = combinedDFWithMlAssets.distinct()
+    println("total count of finalDF : " + finalDF.count())
     val decryptUsernameUDF = udf((encryptedUsername: String) => {
       DecryptUtil.decryptData(encryptedUsername)
     })
@@ -91,6 +116,7 @@ object DeletedUsersAssetsReportJob extends IJob with BaseReportsJob with Seriali
     }
     finalDF.saveToBlobStore(storageConfig,"csv",s"delete_user_$formattedDate", Option(Map("header" -> "true")), Option(Seq("organisationId")))
   }
+
   def name(): String = "DeletedUsersAssetsReportJob"
   def fetchContentAssets(userIds: List[String], channels: List[String])(implicit spark: SparkSession): DataFrame = {
     System.out.println("inside content assets")
@@ -233,4 +259,87 @@ object DeletedUsersAssetsReportJob extends IJob with BaseReportsJob with Seriali
     System.out.println(courseDataDF.count())
     courseDataDF
   }
+
+  def processMlData()(data: util.List[Document], spark: SparkSession): DataFrame = {
+    println("inside process ML assets")
+    val rows: List[Row] = data.asScala.map { doc =>
+      val author = doc.getString("author")
+      val owner = doc.getString("owner")
+      val userId = Option(author).orElse(Option(owner)).getOrElse("")
+      Row(
+        userId,
+        doc.getObjectId("_id").toString,
+        doc.getString("name"),
+        doc.getString("status"),
+        doc.getString("objectType"),
+      )
+    }.toList
+
+    val schema = StructType(
+      List(
+        StructField("userId", StringType, nullable = true),
+        StructField("assetIdentifier", StringType, nullable = false),
+        StructField("assetName", StringType, nullable = true),
+        StructField("assetStatus", StringType, nullable = true),
+        StructField("objectType", StringType, nullable = true)
+      )
+    )
+    val df = spark.createDataFrame(spark.sparkContext.parallelize(rows), schema)
+    println("total count of mlAssetDf : " + df.count())
+    df
+  }
+
+  def fetchMlData(userIds: List[String]): util.List[Document] = {
+
+    /**
+     * To get all the asset information related manage-learn
+     * First make a API call to get asset data if the response status is not true
+     * Then query mongoDB directly to get the required fields
+     */
+    println("inside fetch ML assets")
+    val mlApiUrl = Constants.ML_ASSET_SEARCH_URL
+    val requestMap = Map(
+      "request" -> Map(
+        "filters" -> Map("userIds" -> userIds),
+        "fields" -> Array("_id", "name", "status", "objectType", "author", "owner")
+      )
+    )
+    val request = JSONUtils.serialize(requestMap)
+    val response = RestUtil.post[CollectionDetails](mlApiUrl, request).result
+    val responseMap = response.getOrElse("data", Map.empty).asInstanceOf[Map[String, Any]]
+    val responseStatus = response.getOrElse("success", false).asInstanceOf[Boolean]
+    val count = response.getOrElse("count", 0).asInstanceOf[Int]
+    val requiredData = responseMap.getOrElse("data", List.empty).asInstanceOf[List[Map[String, Any]]]
+
+    if (responseStatus == true) {
+      println("fetched data from API call")
+      val results = requiredData.map { map =>
+        Document(map.map {
+          case ("_id", value) => "_id" -> (if (value.isInstanceOf[String]) new BsonObjectId(new ObjectId(value.toString)) else new BsonObjectId(value.asInstanceOf[ObjectId]))
+          case (key, value) => key -> new BsonString(value.toString)
+        })
+      }
+      results.asJava
+    } else {
+      println("fetched data from mongoDB")
+      val host = Constants.ML_MONGO_HOST
+      val port = Constants.ML_MONGO_PORT
+      val database = Constants.ML_MONGO_DATABASE
+      val mongoUtil = new MongoUtil(host, port, database)
+      val solutionsMatchQuery = Filters.and(in("author", userIds: _*), equal("status", "active"))
+      val programsMatchQuery = Filters.and(in("owner", userIds: _*), equal("status", "active"))
+      val solutionsProjection = Document("_id" -> 1, "name" -> 1, "status" -> 1, "objectType" -> "solutions", "author" -> 1, "createdFor" -> 1)
+      val programsProjection = Document("_id" -> 1, "name" -> 1, "status" -> 1, "objectType" -> "programs", "owner" -> 1, "createdFor" -> 1)
+      val sortQuery = Sorts.descending("createdAt")
+      val solutionsPipeline: List[Bson] = List(filter(solutionsMatchQuery), project(solutionsProjection), sort(sortQuery))
+      val programsPipeline: List[Bson] = List(filter(programsMatchQuery), project(programsProjection), sort(sortQuery))
+      val solutionsResults = mongoUtil.aggregate("solutions", solutionsPipeline)
+      val programsResults = mongoUtil.aggregate("programs", programsPipeline)
+      val combinedResults = new util.ArrayList[Document]()
+      combinedResults.addAll(solutionsResults)
+      combinedResults.addAll(programsResults)
+      combinedResults
+    }
+  }
+
 }
