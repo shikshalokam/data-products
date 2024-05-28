@@ -299,18 +299,22 @@ object DeletedUsersAssetsReportJob extends IJob with BaseReportsJob with Seriali
     println("inside fetch ML assets")
     val mlApiUrl = Constants.ML_ASSET_SEARCH_URL
     println(mlApiUrl)
-    val requestMap = Map(
-      "request" -> Map(
-        "filters" -> Map("userIds" -> userIds),
-        "fields" -> Array("_id", "name", "status", "objectType", "author", "owner")
-      )
-    )
-    val request = JSONUtils.serialize(requestMap)
-    val response = RestUtil.post[CollectionDetails](mlApiUrl, request).result
-    val responseMap = response.getOrElse("data", Map.empty).asInstanceOf[Map[String, Any]]
-    val responseStatus = response.getOrElse("success", false).asInstanceOf[Boolean]
-    val count = response.getOrElse("count", 0).asInstanceOf[Int]
-    val requiredData = responseMap.getOrElse("data", List.empty).asInstanceOf[List[Map[String, Any]]]
+//    val requestMap = Map(
+//      "request" -> Map(
+//        "filters" -> Map("userIds" -> userIds),
+//        "fields" -> Array("_id", "name", "status", "objectType", "author", "owner")
+//      )
+//    )
+//    val request = JSONUtils.serialize(requestMap)
+//    val response = RestUtil.post[CollectionDetails](mlApiUrl, request).result
+//    val responseMap = response.getOrElse("data", Map.empty).asInstanceOf[Map[String, Any]]
+//    val responseStatus = response.getOrElse("success", false).asInstanceOf[Boolean]
+//    val count = response.getOrElse("count", 0).asInstanceOf[Int]
+//    val requiredData = responseMap.getOrElse("data", List.empty).asInstanceOf[List[Map[String, Any]]]
+
+    //todo remove this
+    val requiredData: List[Map[String, Any]] = List.empty[Map[String, Any]]
+    val responseStatus = false
 
     if (responseStatus == true) {
       println("fetched data from API call")
@@ -326,6 +330,8 @@ object DeletedUsersAssetsReportJob extends IJob with BaseReportsJob with Seriali
       val host = Constants.ML_MONGO_HOST
       val port = Constants.ML_MONGO_PORT
       val database = Constants.ML_MONGO_DATABASE
+      //todo remove this
+      println(host, port, database)
       val mongoUtil = new MongoUtil(host, port, database)
       val solutionsMatchQuery = Filters.and(in("author", userIds: _*), equal("status", "active"))
       val programsMatchQuery = Filters.and(in("owner", userIds: _*), equal("status", "active"))
