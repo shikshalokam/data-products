@@ -298,6 +298,7 @@ object DeletedUsersAssetsReportJob extends IJob with BaseReportsJob with Seriali
      */
     println("inside fetch ML assets")
     val mlApiUrl = Constants.ML_ASSET_SEARCH_URL
+    println(mlApiUrl)
     val requestMap = Map(
       "request" -> Map(
         "filters" -> Map("userIds" -> userIds),
