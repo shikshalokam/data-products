@@ -38,6 +38,7 @@ object DeletedUsersAssetsReportJob extends IJob with BaseReportsJob with Seriali
     val spark = openSparkSession(jobConfig)
     implicit val stringEncoder: Encoder[String] = ExpressionEncoder[String]
     val userIds: List[String] = if (configuredUserId.nonEmpty) configuredUserId else getUserIdsFromDeletedUsers(fetchDeletedUsers(spark))
+    println("Printing userId's = " + userIds)
     val channels: List[String] = if (configuredChannel.nonEmpty) configuredChannel else List.empty[String]
     val deletedUsersDF = fetchDeletedUsers(spark)
     System.out.println(deletedUsersDF.count())
